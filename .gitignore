@@ -1,2 +1,5 @@
 /target
 nb-configuration.xml
+.idea
+src/test/xml/out/*
+*.iml

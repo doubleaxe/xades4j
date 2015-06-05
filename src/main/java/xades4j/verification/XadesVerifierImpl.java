@@ -17,14 +17,6 @@
 package xades4j.verification;
 
 import com.google.inject.Inject;
-import java.io.InputStream;
-import java.security.cert.X509CRL;
-import java.security.cert.X509Certificate;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Date;
-import java.util.List;
-import java.util.Set;
 import org.apache.xml.security.exceptions.XMLSecurityException;
 import org.apache.xml.security.signature.Reference;
 import org.apache.xml.security.signature.SignedInfo;
@@ -34,14 +26,11 @@ import org.apache.xml.security.utils.resolver.ResourceResolver;
 import org.apache.xml.security.utils.resolver.implementations.ResolverAnonymous;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
-import xades4j.properties.QualifyingProperty;
-import xades4j.properties.UnsignedSignatureProperty;
 import xades4j.XAdES4jException;
 import xades4j.XAdES4jXMLSigException;
-import xades4j.properties.data.PropertyDataObject;
-import xades4j.properties.UnsignedProperties;
 import xades4j.production.XadesSignatureFormatExtender;
-import xades4j.properties.SignatureTimeStampProperty;
+import xades4j.properties.*;
+import xades4j.properties.data.PropertyDataObject;
 import xades4j.properties.data.SignatureTimeStampData;
 import xades4j.providers.CertificateValidationProvider;
 import xades4j.providers.ValidationData;
@@ -54,8 +43,12 @@ import xades4j.verification.SignatureUtils.ReferencesRes;
 import xades4j.xml.unmarshalling.QualifyingPropertiesUnmarshaller;
 import xades4j.xml.unmarshalling.UnmarshalException;
 
+import java.io.InputStream;
+import java.security.cert.X509CRL;
+import java.security.cert.X509Certificate;
+import java.util.*;
+
 /**
- *
  * @author Luís
  */
 class XadesVerifierImpl implements XadesVerifier
@@ -66,6 +59,7 @@ class XadesVerifierImpl implements XadesVerifier
         org.apache.xml.security.Init.init();
         initFormExtension();
     }
+
     /**/
     private final CertificateValidationProvider certificateValidator;
     private final QualifyingPropertiesVerifier qualifyingPropertiesVerifier;
@@ -132,7 +126,7 @@ class XadesVerifierImpl implements XadesVerifier
         ReferencesRes referencesRes = SignatureUtils.processReferences(signature);
 
         /* Apply early verifiers */
-        
+
         RawSignatureVerifierContext rawCtx = new RawSignatureVerifierContext(signature);
         for (RawSignatureVerifier rawSignatureVerifier : this.rawSigVerifiers)
         {
@@ -191,16 +185,59 @@ class XadesVerifierImpl implements XadesVerifier
         QualifyingPropertyVerificationContext qPropsCtx = new QualifyingPropertyVerificationContext(
                 signature,
                 new QualifyingPropertyVerificationContext.CertificationChainData(
-                certValidationRes.getCerts(),
-                certValidationRes.getCrls(),
-                keyInfoRes.issuerSerial),
+                        certValidationRes.getCerts(),
+                        certValidationRes.getCrls(),
+                        keyInfoRes.issuerSerial),
                 /**/
                 new QualifyingPropertyVerificationContext.SignedObjectsData(
-                referencesRes.dataObjsReferences,
-                signature));
+                        referencesRes.dataObjsReferences,
+                        signature));
 
         // Verify the properties. Data structure verification is included.
         Collection<PropertyInfo> props = this.qualifyingPropertiesVerifier.verifyProperties(qualifPropsData, qPropsCtx);
+
+        // Apply the constraints of section 4.4.1 of ETSI TS 101 903
+        boolean propertyPresent = false;
+        // Check if incorporating the SigningCertificate signed property
+        for (PropertyInfo propInfo : props)
+        {
+            if (propInfo.getProperty().getName().equals(SigningCertificateProperty.PROP_NAME))
+            {
+                propertyPresent = true;
+                break;
+            }
+        }
+        boolean keyInfoSigned = false;
+        if (!propertyPresent)
+        {
+            // Check if incorporating the signing certificate within the ds:KeyInfo element
+            // and signing the signing certificate
+            if (signature.getKeyInfo() == null && !signature.getKeyInfo().containsX509Data())
+                throw new InvalidKeyInfoDataException("SigningCertificate signed property is non present and KeyInfo not contain the signing certificate.");
+            String id = signature.getKeyInfo().getId();
+
+            SignedInfo signedInfo = signature.getSignedInfo();
+
+            for (int i = 0; i < signedInfo.getLength(); i++)
+            {
+                Reference ref;
+                try
+                {
+                    ref = signedInfo.item(i);
+                    if (ref.getURI().equals("#" + id) && ref.verify())
+                    {
+                        keyInfoSigned = true;
+                        break;
+                    }
+                } catch (XMLSecurityException ex)
+                {
+                    throw new XAdES4jXMLSigException(String.format("Cannot process the %dth reference", i), ex);
+                }
+
+            }
+            if (!keyInfoSigned)
+                throw new InvalidKeyInfoDataException("SigningCertificate signed property is non present and KeyInfo not contain the signing certificate.");
+        }
 
         XAdESVerificationResult res = new XAdESVerificationResult(
                 XAdESFormChecker.checkForm(props),
@@ -217,10 +254,11 @@ class XadesVerifierImpl implements XadesVerifier
 
         return res;
     }
-    
-    /*************************************************************************************/
-    /**/
 
+    /**
+     * *********************************************************************************
+     */
+    /**/
     private Date getValidationDate(
             Collection<PropertyDataObject> qualifPropsData,
             XMLSignature signature) throws XAdES4jException
@@ -240,13 +278,13 @@ class XadesVerifierImpl implements XadesVerifier
         QualifyingPropertyVerificationContext ctx = new QualifyingPropertyVerificationContext(
                 signature,
                 new QualifyingPropertyVerificationContext.CertificationChainData(
-                new ArrayList<X509Certificate>(0),
-                new ArrayList<X509CRL>(0),
-                null),
+                        new ArrayList<X509Certificate>(0),
+                        new ArrayList<X509CRL>(0),
+                        null),
                 /**/
                 new QualifyingPropertyVerificationContext.SignedObjectsData(
-                new ArrayList<RawDataObjectDesc>(0),
-                signature));
+                        new ArrayList<RawDataObjectDesc>(0),
+                        signature));
         Collection<PropertyInfo> props = this.qualifyingPropertiesVerifier.verifyProperties(sigTsData, ctx);
         QualifyingProperty sigTs = props.iterator().next().getProperty();
 
@@ -259,7 +297,7 @@ class XadesVerifierImpl implements XadesVerifier
             X509Certificate validationCert) throws XAdES4jXMLSigException, InvalidSignatureException
     {
         List<ResourceResolver> resolvers = verificationOptions.getResolvers();
-        if(!CollectionUtils.nullOrEmpty(resolvers))
+        if (!CollectionUtils.nullOrEmpty(resolvers))
         {
             for (ResourceResolver resolver : resolvers)
             {
@@ -279,8 +317,7 @@ class XadesVerifierImpl implements XadesVerifier
             {
                 return;
             }
-        }
-        catch (XMLSignatureException ex)
+        } catch (XMLSignatureException ex)
         {
             throw new XAdES4jXMLSigException("Error verifying the signature", ex);
         }
@@ -307,20 +344,22 @@ class XadesVerifierImpl implements XadesVerifier
                     }
                 }
             }
-        }
-        catch (XMLSecurityException ex)
+        } catch (XMLSecurityException ex)
         {
             throw new XAdES4jXMLSigException("Error verifying the references", ex);
         }
     }
 
-    /*************************************************************************************/
+    /**
+     * *********************************************************************************
+     */
     private static interface FormExtensionPropsCollector
     {
 
         void addProps(Collection<UnsignedSignatureProperty> usp,
-                XAdESVerificationResult res);
+                      XAdESVerificationResult res);
     }
+
     private static FormExtensionPropsCollector[][] formsExtensionTransitions;
 
     private static void initFormExtension()

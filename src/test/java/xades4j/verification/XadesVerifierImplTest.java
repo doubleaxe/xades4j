@@ -21,6 +21,7 @@ import java.io.InputStream;
 import static org.junit.Assert.*;
 import static org.junit.Assume.assumeTrue;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -108,6 +109,7 @@ public class XadesVerifierImplTest extends VerifierTestBase
         outputDocument(doc, "document.verified.bes.t.xml");
     }
 
+    @Ignore
     @Test
     public void testVerifyBESExtrnlResEnrichC() throws Exception
     {
@@ -174,6 +176,7 @@ public class XadesVerifierImplTest extends VerifierTestBase
         assertEquals(XAdESForm.C, f);
     }
 
+    @Ignore
     @Test
     public void testVerifyDetachedC() throws Exception
     {
